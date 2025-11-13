@@ -4,6 +4,8 @@ import websockets
 from typing import Optional, Dict, Any
 from . import config
 from .dynamo_utils import write_call_log
+from .tools_impl import TOOLS_SCHEMA, TOOLS_IMPL
+import pprint
 
 async def websocket_task(call_id: str, phone_number: Optional[str], response_create: Dict[str, Any]) -> None:
     try:
@@ -17,6 +19,7 @@ async def websocket_task(call_id: str, phone_number: Optional[str], response_cre
                     "type": "session.update",
                     "session": {
                         "type": "realtime",
+                        "tools": TOOLS_SCHEMA,
                         "audio": {
                             "input": {
                                 "transcription": {
@@ -40,6 +43,10 @@ async def websocket_task(call_id: str, phone_number: Optional[str], response_cre
                 print("Greeting log failed:", _e)
 
             assistant_text_chunks = []
+            # Accumulate tool call arguments by call_id
+            tool_args_buf: Dict[str, str] = {}
+            # Remember tool name by call_id (some done events may omit name)
+            tool_name_by_id: Dict[str, str] = {}
 
             while True:
                 raw_message = await websocket.recv()
@@ -76,6 +83,62 @@ async def websocket_task(call_id: str, phone_number: Optional[str], response_cre
                             if full_text:
                                 write_call_log(phone_number=phone_number, assistant_text=full_text, call_sid=call_id)
                             assistant_text_chunks = []
+                    # Tool calling (function calling) - arguments streaming
+                    elif evt_type in ("response.function_call_arguments.delta", "response.tool_call.delta"):
+                        tool_call_id = evt.get("call_id")
+                        tool_name = evt.get("name")
+                        delta = evt.get("arguments_delta") or ""
+                        if not isinstance(delta, str):
+                            delta = ""
+                        if tool_call_id:
+                            tool_args_buf[tool_call_id] = tool_args_buf.get(tool_call_id, "") + delta
+                            if tool_name:
+                                tool_name_by_id[tool_call_id] = tool_name
+                    elif evt_type in ("response.function_call_arguments.done", "response.tool_call.done"):
+                        print("response.function_call_arguments.done or response.tool_call.done")
+                        pprint.pprint(evt)
+                        tool_call_id = evt.get("call_id")
+                        tool_name = evt.get("name") or (tool_call_id and tool_name_by_id.get(tool_call_id))
+                        # args_json = tool_call_id and tool_args_buf.get(tool_call_id, "") or ""
+                        args_json = evt.get("arguments") or ""
+                        # Parse args
+                        args = {}
+                        try:
+                            if args_json:
+                                args = json.loads(args_json)
+                        except Exception:
+                            args = {}
+                        print("[tool call]", tool_name, "args=", args)
+                        # Execute tool
+                        result: Any = {"error": "unknown tool"}
+                        impl = TOOLS_IMPL.get(tool_name or "")
+                        if impl:
+                            try:
+                                result = impl(args)
+                            except Exception as e:
+                                result = {"error": str(e)}
+                        if not tool_call_id:
+                            print("[WS ERROR] function_call_arguments.done without call_id")
+                        else:
+                            # Send function_call_output back to Realtime
+                            try:
+                                await websocket.send(json.dumps({
+                                    "type": "conversation.item.create",
+                                    "item": {
+                                        "type": "function_call_output",
+                                        "call_id": tool_call_id,
+                                        "output": json.dumps(result, ensure_ascii=False)
+                                    }
+                                }))
+                            except Exception as _e:
+                                print("[WS ERROR] send function_call_output failed:", _e)
+                        # Clear buffer for this call id
+                        if tool_call_id and tool_call_id in tool_args_buf:
+                            del tool_args_buf[tool_call_id]
+                        if tool_call_id and tool_call_id in tool_name_by_id:
+                            del tool_name_by_id[tool_call_id]
+                        # Ask the model to continue the response
+                        await websocket.send(json.dumps({"type": "response.create"}))
                     # User transcript (final)
                     elif evt_type in ("conversation.item.input_audio_transcription.completed", "input_audio_transcription.completed"):
                         transcript = evt.get("transcript")

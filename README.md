@@ -11,6 +11,7 @@ OpenAI Realtime APIのWebhookリクエストを受信し、音声通話を処理
 - WebSocket接続による双方向通信
 - 日本語での音声応答（「もしもし、本日のご要件はなんですか？」）
 - カスタマイズ可能な音声応答メッセージ
+- Function Calling（予約タスクの作成/参照/更新/削除）をRealtimeで実行（DynamoDB連携）
 
 ## 必要要件
 
@@ -63,6 +64,8 @@ AWS_REGION=ap-northeast-1
 PROMPTS_TABLE_NAME=ueki-prompts        # id=system の content を読み込み
 FAQ_TABLE_NAME=ueki-faq                # question/answer をスキャンしてFAQ_KBに注入
 CALL_LOGS_TABLE_NAME=ueki-chatbot      # 会話ログ（user/assistant）を書き込み
+TASKS_TABLE_NAME=ueki-tasks            # 予約タスクの保存先（Function Calling）
+TOOLS_DEBUG=1                          # ツール実行の詳細ログ（不要なら 0）
 
 # プロンプト/FAQの外部ファイル（任意）
 SYSTEM_PROMPT_PATH=system_prompt.txt
@@ -82,6 +85,9 @@ DEFAULT_PHONE_NUMBER=08012345678
 
 # 方法: 環境変数を使用（推奨）
 python main_with_env.py
+
+# またはモジュール分割版（src/）を使う場合
+python -m src.app_modular
 ```
 
 サーバーはデフォルトでポート8000で起動します。
@@ -97,11 +103,20 @@ POST http://localhost:8000/
 ```
 SIP-Webhook/
 ├── README.md           # このファイル
-├── main_with_env.py   # 環境変数版のアプリケーション（日本語対応）
+├── main_with_env.py   # 一体型のアプリケーション
 ├── .env               # 環境変数ファイル（gitignoreに追加）
 ├── .gitignore         # Git除外設定ファイル
 ├── requirements.txt   # 依存パッケージリスト
-└── venv/             # 仮想環境ディレクトリ（gitignoreに追加）
+├── src/               # モジュール分割構成（推奨）
+│   ├── __init__.py
+│   ├── app_modular.py     # 分割版のFlaskエントリ（/ webhook）
+│   ├── config.py          # 環境変数/クライアント設定
+│   ├── dynamo_utils.py    # DynamoDB 読み書き（会話ログ、プロンプト/FAQ）
+│   ├── phone_utils.py     # 電話番号の抽出/正規化
+│   ├── prompt_loader.py   # システムプロンプトの組み立て
+│   ├── realtime_ws.py     # Realtime WebSocket 処理
+│   └── tools_impl.py      # Function Calling用ツール実装（予約タスク）
+└── venv/               # 仮想環境ディレクトリ（gitignoreに追加）
 ```
 
 ## システムプロンプト／FAQナレッジの外部化
@@ -148,6 +163,7 @@ python main_with_env.py
 4. WebSocket接続を確立
 5. 日本語で応答（「もしもし、本日のご要件はなんですか？」）
 6. WebSocket経由でリアルタイム通信を継続
+7. 必要に応じて Function Calling（ツール呼び出し）を実施し、予約をDynamoDBに保存/更新
 
 <!-- Function Calling 機能は現在無効化しています。 -->
 
@@ -178,6 +194,27 @@ python main_with_env.py
   - `user_text` / `assistant_text`
   - `call_sid`
 - 重要: `ts` はマイクロ秒を含めています（例: `2025-11-11T14:20:08.123456+00:00`）。同一秒内の連続ログでも上書きされないようにするためです。
+
+### Realtime 予約（Function Calling）
+- モデルにツールを公開し、予約CRUDをDynamoDBで実施します。
+- 定義箇所: `src/tools_impl.py`
+  - 提供ツール: `list_tasks`, `create_task`, `get_task`, `update_task`, `delete_task`
+  - 保存テーブル: `TASKS_TABLE_NAME`（既定 `ueki-tasks`）
+- WebSocket側の処理: `src/realtime_ws.py`
+  - `session.update` で `tools` を渡し、ツール呼び出しイベントを処理
+  - イベントは Realtime 仕様に従ってパースします:
+    - 逐次: `response.function_call_arguments.delta` → `call_id`, `arguments_delta` を使用
+    - 完了: `response.function_call_arguments.done` → `call_id`, `name`（必要に応じて直前の name を補完）
+    - 実装では一部バックエンドで `evt.arguments` が渡る場合も考慮（存在すれば優先）
+  - 引数をJSONに組み立て、`TOOLS_IMPL` を実行
+  - 結果を `conversation.item.create` で返却（`item.type: function_call_output`, `call_id: <必須>`, `output: "<json>"`）
+  - その後 `response.create` を送信して応答を継続
+  - デバッグログ（有効時）: `[tool call] <name> args= {...}` / `[WS ERROR] ...`
+
+注意点（ハマりどころ）:
+- `session.tools` スキーマは name がトップレベルに必須（例: `{"name":"create_task","type":"function","parameters":{...}}`）
+- 戻りのアイテムは `tool_result` ではなく `function_call_output`
+- `function_call_output.call_id` は空で送れない（必ずイベントの `call_id` を使用）
 
 ## カスタマイズ
 

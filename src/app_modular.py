@@ -3,10 +3,19 @@ import threading
 import requests
 from openai import InvalidWebhookSignatureError
 
-from . import config
-from .prompt_loader import build_system_prompt
-from .phone_utils import extract_phone_from_event_or_request
-from .realtime_ws import websocket_task
+# Support both "python -m src.app_modular" and "python src/app_modular.py"
+try:
+    from . import config
+    from .prompt_loader import build_system_prompt
+    from .phone_utils import extract_phone_from_event_or_request
+    from .realtime_ws import websocket_task
+except Exception:
+    import os as _os, sys as _sys
+    _sys.path.append(_os.path.dirname(_os.path.dirname(__file__)))
+    from src import config  # type: ignore
+    from src.prompt_loader import build_system_prompt  # type: ignore
+    from src.phone_utils import extract_phone_from_event_or_request  # type: ignore
+    from src.realtime_ws import websocket_task  # type: ignore
 
 app = Flask(__name__)
 
