@@ -216,6 +216,52 @@ python main_with_env.py
 - 戻りのアイテムは `tool_result` ではなく `function_call_output`
 - `function_call_output.call_id` は空で送れない（必ずイベントの `call_id` を使用）
 
+## コンテナ/クラウドデプロイ（AWS App Runner 推奨）
+
+### ローカルDocker実行
+```bash
+docker build -t realtime-sip-bot .
+docker run --rm -p 8000:8000 \
+  --env-file .env \
+  realtime-sip-bot
+# → http://localhost:8000 に / をPOST でWebhook受信
+```
+
+### ECRにpush
+```bash
+AWS_REGION=ap-northeast-1
+ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+REPO=realtime-sip-bot
+
+aws ecr create-repository --repository-name $REPO --region $AWS_REGION || true
+aws ecr get-login-password --region $AWS_REGION | docker login --username AWS --password-stdin $ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com
+
+docker build -t $REPO .
+docker tag $REPO:latest $ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/$REPO:latest
+docker push $ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/$REPO:latest
+```
+
+### App Runner作成（コンソール推奨・ポイント）
+- イメージ: 上記ECRの最新イメージ
+- ポート: 8000
+- 起動コマンド: 既定（DockerfileのCMD: gunicorn ...）
+- 環境変数（Secrets推奨）:
+  - `OPENAI_API_KEY`, `OPENAI_WEBHOOK_SECRET`, `AWS_REGION`
+  - `PROMPTS_TABLE_NAME`, `FAQ_TABLE_NAME`, `CALL_LOGS_TABLE_NAME`, `TASKS_TABLE_NAME`
+  - `DEFAULT_PHONE_NUMBER`（任意）, `TOOLS_DEBUG`（任意）
+- ヘルスチェック: HTTP GET `/`（200 OK）
+- スケール: 最小 1 インスタンス（通話受けのため常時起動）
+- カスタムドメイン（任意）: Route53 + ACM
+
+### OpenAI側設定
+- Realtime（SIP）の Webhook URL に App Runner のURLを登録
+- Webhook Secret を `OPENAI_WEBHOOK_SECRET` と一致させる
+
+トラブルシュート:
+- 401/署名不正 → `OPENAI_WEBHOOK_SECRET` の一致確認
+- ASRが出ない → `session.update` の設定、ログの `[WS TRANSCRIPTION EVT]` を確認
+- Function Calling失敗 → README「Realtime 予約（Function Calling）」の注意点（call_id/name/arguments）を確認
+
 ## カスタマイズ
 
 ### 応答メッセージの変更
