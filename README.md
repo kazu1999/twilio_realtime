@@ -73,6 +73,11 @@ FAQ_KB_PATH=faq.txt
 
 # 電話番号フォールバック（任意・デバッグ用）
 DEFAULT_PHONE_NUMBER=08012345678
+
+# AWS認証
+AWS_ACCESS_KEY_ID=あなたのアクセスキーID
+AWS_SECRET_ACCESS_KEY=あなたのシークレットアクセスキー
+AWS_SESSION_TOKEN=yyyyyyyy    # SSO/一時認証のときのみ有効化
 ```
 
 2. アプリを起動します（ローカルPython または Docker）
