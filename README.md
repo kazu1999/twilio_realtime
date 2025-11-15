@@ -49,7 +49,7 @@ pip install -r requirements.txt
 
 ## 設定方法
 
-### 環境変数を使用（main_with_env.py）
+### 環境変数を使用（.env）
 
 `.env`ファイルを使用して認証情報・設定を管理します。
 
@@ -75,16 +75,16 @@ FAQ_KB_PATH=faq.txt
 DEFAULT_PHONE_NUMBER=08012345678
 ```
 
-2. `main_with_env.py`を使用して起動します。
+2. アプリを起動します（ローカルPython または Docker）
 
 ## 実行方法
 
-### 開発サーバーの起動
+### 開発サーバーの起動（ローカルPython）
 
 ```bash
 
-# 方法: 環境変数を使用（推奨）
-python main_with_env.py
+# パッケージ実行（推奨）
+python -m src.app_modular
 
 # またはモジュール分割版（src/）を使う場合
 python -m src.app_modular
@@ -103,7 +103,6 @@ POST http://localhost:8000/
 ```
 SIP-Webhook/
 ├── README.md           # このファイル
-├── main_with_env.py   # 一体型のアプリケーション
 ├── .env               # 環境変数ファイル（gitignoreに追加）
 ├── .gitignore         # Git除外設定ファイル
 ├── requirements.txt   # 依存パッケージリスト
@@ -129,7 +128,7 @@ SIP-Webhook/
 ```bash
 export SYSTEM_PROMPT_PATH=system_prompt.txt
 export FAQ_KB_PATH=faq.txt
-python main_with_env.py
+python -m src.app_modular
 ```
 
 デフォルトでは `system_prompt.txt` に近い内容が組み込み済みです。そのままでも動作します。
@@ -143,7 +142,7 @@ python main_with_env.py
 ```bash
 export PROMPTS_TABLE_NAME=ueki-prompts
 export FAQ_TABLE_NAME=ueki-faq
-python main_with_env.py
+python -m src.app_modular
 ```
 
 ## 主要な依存パッケージ
@@ -305,12 +304,8 @@ pip install websockets==13.1
 - ログに `[WS ERROR]` を出すようにしているので、エラー内容を確認してください。
 
 ### ポート8000が既に使用中
-
-`main.py`または`main_with_env.py`の最終行でポート番号を変更：
-
-```python
-app.run(port=8001)  # 別のポート番号に変更
-```
+- ローカルPython実行の場合は環境変数 `PORT` を使うか、`src/app_modular.py` の `app.run(port=8000)` を手元で変更
+- Docker実行の場合は `-p <host_port>:8000` でホスト側ポートを変える（例: `-p 8001:8000`）
 
 ### 仮想環境の終了
 
