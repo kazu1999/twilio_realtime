@@ -21,12 +21,12 @@ def build_system_prompt() -> str:
     # 2) File path (SYSTEM_PROMPT_PATH)
     if not system_prompt and config.SYSTEM_PROMPT_PATH:
         _p = _load_text_file(config.SYSTEM_PROMPT_PATH)
-        print("system_prompt: ", _p)
         if _p:
             system_prompt = _p
     # 3) If still None, fallback to empty
     if not system_prompt:
         system_prompt = ""
+    print("system_prompt: ", _p)
     # Inject FAQ KB payload
     _faq_payload = None
     if config.FAQ_TABLE_NAME:
