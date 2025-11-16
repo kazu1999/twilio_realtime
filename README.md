@@ -245,6 +245,33 @@ docker tag $REPO:latest $ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/$REPO:late
 docker push $ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com/$REPO:latest
 ```
 
+### M1/M2（ARM）Macでの「exec format error」対策（linux/amd64でビルド）
+App Runner は x86_64（linux/amd64）で稼働します。ARM（M1/M2）Macで通常ビルドしたイメージは `exec format error` になります。以下の Buildx コマンドで linux/amd64 向けにビルド＆ECRへ直接 push してください。
+
+```bash
+cd /Users/kazutomatsumoto/workspace/nespe/realtime/realtimeapi-sip-webhook-server
+
+export REPO=realtime-sip-bot
+export ACCOUNT_ID=339712825457
+export AWS_REGION=ap-northeast-1
+
+# Buildx 準備（初回のみ）
+docker buildx create --use --name nespe-builder || true
+docker buildx inspect --bootstrap
+
+# ECR ログイン
+aws ecr get-login-password --region "$AWS_REGION" | \
+  docker login --username AWS --password-stdin "$ACCOUNT_ID".dkr.ecr."$AWS_REGION".amazonaws.com
+
+# linux/amd64 向けにビルドして push
+docker buildx build \
+  --platform linux/amd64 \
+  -t "$ACCOUNT_ID".dkr.ecr."$AWS_REGION".amazonaws.com/"$REPO":latest \
+  --push .
+```
+
+ビルド後、App Runner の自動デプロイを有効にしていない場合は、コンソールから「Deploy new revision」を実行してください。
+
 ### App Runner作成（コンソール推奨・ポイント）
 - イメージ: 上記ECRの最新イメージ
 - ポート: 8000
