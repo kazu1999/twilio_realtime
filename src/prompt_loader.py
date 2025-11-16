@@ -26,7 +26,7 @@ def build_system_prompt() -> str:
     # 3) If still None, fallback to empty
     if not system_prompt:
         system_prompt = ""
-    print("system_prompt: ", _p)
+    print("system_prompt: ", system_prompt)
     # Inject FAQ KB payload
     _faq_payload = None
     if config.FAQ_TABLE_NAME:

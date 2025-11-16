@@ -34,6 +34,11 @@ response_create = {
     },
 }
 
+@app.get("/")
+def healthz():
+    # Simple health endpoint for HTTP health checks
+    return Response("ok", status=200)
+
 @app.route("/", methods=["POST"])
 def webhook():
     try:
