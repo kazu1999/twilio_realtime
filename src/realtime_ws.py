@@ -7,7 +7,7 @@ from .dynamo_utils import write_call_log
 from .tools_impl import TOOLS_SCHEMA, TOOLS_IMPL
 import pprint
 
-async def websocket_task(call_id: str, phone_number: Optional[str], response_create: Dict[str, Any]) -> None:
+async def websocket_task(call_id: str, phone_number: Optional[str], response_create: Dict[str, Any], twilio_call_sid: Optional[str] = None) -> None:
     try:
         async with websockets.connect(
             "wss://api.openai.com/v1/realtime?call_id=" + call_id,
@@ -38,7 +38,7 @@ async def websocket_task(call_id: str, phone_number: Optional[str], response_cre
             try:
                 greeting = response_create.get("response", {}).get("instructions")
                 if greeting:
-                    write_call_log(phone_number=phone_number, assistant_text=greeting, call_sid=call_id)
+                    write_call_log(phone_number=phone_number, assistant_text=greeting, call_sid=(twilio_call_sid or call_id))
             except Exception as _e:
                 print("Greeting log failed:", _e)
 
@@ -75,13 +75,13 @@ async def websocket_task(call_id: str, phone_number: Optional[str], response_cre
                     elif evt_type == "response.output_audio_transcript.done":
                         transcript = evt.get("transcript")
                         if isinstance(transcript, str) and transcript.strip():
-                            write_call_log(phone_number=phone_number, assistant_text=transcript.strip(), call_sid=call_id)
+                            write_call_log(phone_number=phone_number, assistant_text=transcript.strip(), call_sid=(twilio_call_sid or call_id))
                         assistant_text_chunks = []
                     elif evt_type in ("response.output_text.done", "response.completed"):
                         if assistant_text_chunks:
                             full_text = "".join(assistant_text_chunks).strip()
                             if full_text:
-                                write_call_log(phone_number=phone_number, assistant_text=full_text, call_sid=call_id)
+                                write_call_log(phone_number=phone_number, assistant_text=full_text, call_sid=(twilio_call_sid or call_id))
                             assistant_text_chunks = []
                     # Tool calling (function calling) - arguments streaming
                     elif evt_type in ("response.function_call_arguments.delta", "response.tool_call.delta"):
@@ -147,7 +147,7 @@ async def websocket_task(call_id: str, phone_number: Optional[str], response_cre
                             transcript = tr.get("text")
                         print("[user transcription]", evt_type, repr(transcript))
                         if isinstance(transcript, str) and transcript.strip():
-                            write_call_log(phone_number=phone_number, user_text=transcript.strip(), call_sid=call_id)
+                            write_call_log(phone_number=phone_number, user_text=transcript.strip(), call_sid=(twilio_call_sid or call_id))
                     # User transcript (delta)
                     elif evt_type == "conversation.item.input_audio_transcription.delta":
                         delta_txt = evt.get("delta")
@@ -160,7 +160,7 @@ async def websocket_task(call_id: str, phone_number: Optional[str], response_cre
                                 if c.get("type") == "input_audio":
                                     tr = c.get("transcript")
                                     if isinstance(tr, str) and tr.strip():
-                                        write_call_log(phone_number=phone_number, user_text=tr.strip(), call_sid=call_id)
+                                        write_call_log(phone_number=phone_number, user_text=tr.strip(), call_sid=(twilio_call_sid or call_id))
                 except Exception:
                     pass
     except Exception as e:

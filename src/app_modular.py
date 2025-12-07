@@ -49,8 +49,31 @@ def webhook():
         except Exception:
             pass
 
+        # Try to extract Twilio CallSid from SIP headers if present
+        def _extract_twilio_call_sid(evt) -> str | None:
+            try:
+                data = getattr(evt, "data", None)
+                sip_headers = None
+                if data is not None:
+                    if isinstance(data, dict):
+                        sip_headers = data.get("sip_headers")
+                    else:
+                        sip_headers = getattr(data, "sip_headers", None)
+                if sip_headers:
+                    for h in sip_headers:
+                        name = h.get("name") if isinstance(h, dict) else getattr(h, "name", None)
+                        value = h.get("value") if isinstance(h, dict) else getattr(h, "value", None)
+                        if name and name.lower() in ("x-twilio-callsid", "twilio-callsid"):
+                            if value:
+                                return str(value).strip()
+            except Exception:
+                pass
+            return None
+
         phone_number = extract_phone_from_event_or_request(event, request)
         print("[phone] extracted:", phone_number)
+        twilio_call_sid = _extract_twilio_call_sid(event)
+        print("[twilio] CallSid:", twilio_call_sid)
 
         if event.type == "realtime.call.incoming":
             requests.post(
@@ -60,7 +83,12 @@ def webhook():
             )
             threading.Thread(
                 target=lambda: __import__("asyncio").run(
-                    websocket_task(event.data.call_id, phone_number=phone_number, response_create=response_create)
+                    websocket_task(
+                        event.data.call_id,
+                        phone_number=phone_number,
+                        response_create=response_create,
+                        twilio_call_sid=twilio_call_sid,
+                    )
                 ),
                 daemon=True,
             ).start()
