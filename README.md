@@ -12,12 +12,14 @@ OpenAI Realtime APIのWebhookリクエストを受信し、音声通話を処理
 - 日本語での音声応答（「もしもし、本日のご要件はなんですか？」）
 - カスタマイズ可能な音声応答メッセージ
 - Function Calling（予約タスクの作成/参照/更新/削除）をRealtimeで実行（DynamoDB連携）
+- **マルチテナント対応**: `CLIENT_ID` によるデータ分離
 
 ## 必要要件
 
 - Python 3.8以上
 - OpenAI APIキー
 - OpenAI Webhook Secret
+- AWS クレデンシャル（DynamoDBアクセス用）
 
 ## セットアップ
 
@@ -60,11 +62,15 @@ OPENAI_API_KEY=sk-xxxx
 OPENAI_WEBHOOK_SECRET=whsec_xxxx
 AWS_REGION=ap-northeast-1
 
-# DynamoDB（任意）
-PROMPTS_TABLE_NAME=ueki-prompts        # id=system の content を読み込み
-FAQ_TABLE_NAME=ueki-faq                # question/answer をスキャンしてFAQ_KBに注入
-CALL_LOGS_TABLE_NAME=ueki-chatbot      # 会話ログ（user/assistant）を書き込み
-TASKS_TABLE_NAME=ueki-tasks            # 予約タスクの保存先（Function Calling）
+# マルチテナント識別子 (必須)
+# どのテナントとして振る舞うかを指定します（ueki, nespeなど）
+CLIENT_ID=ueki
+
+# DynamoDB（app-* 共通テーブルを使用）
+PROMPTS_TABLE_NAME=app-prompts        # id=system の content を読み込み
+FAQ_TABLE_NAME=app-faq                # question/answer をスキャンしてFAQ_KBに注入
+CALL_LOGS_TABLE_NAME=app-logs         # 会話ログ（user/assistant）を書き込み
+TASKS_TABLE_NAME=app-tasks            # 予約タスクの保存先（Function Calling）
 TOOLS_DEBUG=1                          # ツール実行の詳細ログ（不要なら 0）
 
 # プロンプト/FAQの外部ファイル（任意）
@@ -140,13 +146,14 @@ python -m src.app_modular
 
 ### DynamoDB からの読み込み（任意）
 
-- 環境変数 `PROMPTS_TABLE_NAME` を設定すると、DynamoDB テーブル（例: `ueki-prompts`）の `id=system` の `content` をシステムプロンプトとして読み込みます。
-- 環境変数 `FAQ_TABLE_NAME` を設定すると、DynamoDB テーブル（例: `ueki-faq`）をスキャンし、`[{\"question\",\"answer\"}, ...]` の配列を構築して `{FAQ_KB}` を置換します（最大200件, PAY_PER_REQUEST前提）。
+- 環境変数 `PROMPTS_TABLE_NAME` を設定すると、DynamoDB テーブル（例: `app-prompts`）の `client_id={CLIENT_ID}, id=system` の `content` をシステムプロンプトとして読み込みます。
+- 環境変数 `FAQ_TABLE_NAME` を設定すると、DynamoDB テーブル（例: `app-faq`）をクエリ（`client_id={CLIENT_ID}`）し、`[{\"question\",\"answer\"}, ...]` の配列を構築して `{FAQ_KB}` を置換します。
 
 例:
 ```bash
-export PROMPTS_TABLE_NAME=ueki-prompts
-export FAQ_TABLE_NAME=ueki-faq
+export PROMPTS_TABLE_NAME=app-prompts
+export FAQ_TABLE_NAME=app-faq
+export CLIENT_ID=ueki
 python -m src.app_modular
 ```
 
@@ -193,6 +200,8 @@ python -m src.app_modular
 ### DynamoDBへの会話ログ書き込み
 - `CALL_LOGS_TABLE_NAME` に対して `put_item`。
 - 保存項目の例:
+  - `client_id` (PK)
+  - `sk` (ts#phone_number)
   - `phone_number`（正規化済み）
   - `ts`（UTC ISO8601, マイクロ秒まで含む）
   - `user_text` / `assistant_text`
@@ -203,7 +212,8 @@ python -m src.app_modular
 - モデルにツールを公開し、予約CRUDをDynamoDBで実施します。
 - 定義箇所: `src/tools_impl.py`
   - 提供ツール: `list_tasks`, `create_task`, `get_task`, `update_task`, `delete_task`
-  - 保存テーブル: `TASKS_TABLE_NAME`（既定 `ueki-tasks`）
+  - 保存テーブル: `TASKS_TABLE_NAME`（既定 `app-tasks`）
+  - `client_id` によるフィルタリングが自動的に適用されます。
 - WebSocket側の処理: `src/realtime_ws.py`
   - `session.update` で `tools` を渡し、ツール呼び出しイベントを処理
   - イベントは Realtime 仕様に従ってパースします:
@@ -279,6 +289,7 @@ docker buildx build \
 - 環境変数（Secrets推奨）:
   - `OPENAI_API_KEY`, `OPENAI_WEBHOOK_SECRET`, `AWS_REGION`
   - `PROMPTS_TABLE_NAME`, `FAQ_TABLE_NAME`, `CALL_LOGS_TABLE_NAME`, `TASKS_TABLE_NAME`
+  - `CLIENT_ID` (必須)
   - `DEFAULT_PHONE_NUMBER`（任意）, `TOOLS_DEBUG`（任意）
 - ヘルスチェック: HTTP GET `/`（200 OK）
 - スケール: 最小 1 インスタンス（通話受けのため常時起動）
@@ -353,4 +364,3 @@ deactivate
 - APIキーやWebhook Secretをコードに直接記載しないでください
 - `.env`ファイルは`.gitignore`に追加してください
 - HTTPSを使用してWebhookエンドポイントを保護してください
-

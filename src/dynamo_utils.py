@@ -3,6 +3,7 @@ from typing import Optional
 
 try:
     import boto3
+    from boto3.dynamodb.conditions import Key
     from botocore.exceptions import BotoCoreError, ClientError
 except Exception:
     boto3 = None
@@ -38,10 +39,15 @@ def write_call_log(phone_number: Optional[str] = None, user_text: Optional[str] 
         return
     try:
         table = ddb.Table(config.CALL_LOGS_TABLE_NAME)
-        normalized = normalize_phone(phone_number) if phone_number else None
+        normalized = normalize_phone(phone_number) if phone_number else "unknown"
+        timestamp = ts or to_iso8601_utc_micro()
+        
+        # New Schema: PK=client_id, SK=phone#ts
         item = {
-            "phone_number": normalized or (phone_number or "unknown"),
-            "ts": ts or to_iso8601_utc_micro(),
+            "client_id": config.CLIENT_ID,
+            "sk": f"{normalized}#{timestamp}",
+            "phone_number": normalized,
+            "ts": timestamp,
         }
         if user_text is not None:
             print("[log] user_text:", user_text)
@@ -51,6 +57,7 @@ def write_call_log(phone_number: Optional[str] = None, user_text: Optional[str] 
             item["assistant_text"] = assistant_text
         if call_sid:
             item["call_sid"] = call_sid
+            
         print("[log] put_item:", item)
         table.put_item(Item=item)
     except Exception as _e:
@@ -62,7 +69,8 @@ def load_system_prompt_from_dynamo(table_name: str) -> Optional[str]:
         return None
     try:
         table = ddb.Table(table_name)
-        res = table.get_item(Key={"id": "system"})
+        # New Schema: PK=client_id, SK=id
+        res = table.get_item(Key={"client_id": config.CLIENT_ID, "id": "system"})
         item = res.get("Item")
         if not item:
             return None
@@ -80,18 +88,25 @@ def load_faq_kb_from_dynamo(table_name: str, limit: int = 200) -> Optional[str]:
         return None
     try:
         table = ddb.Table(table_name)
-        scan_kwargs = {}
+        # Use Query instead of Scan for tenant isolation
+        # Schema: PK=client_id, SK=question
+        kwargs = {
+            "KeyConditionExpression": Key("client_id").eq(config.CLIENT_ID),
+            "Limit": limit
+        }
+        
         items = []
         while True:
-            res = table.scan(**scan_kwargs)
+            res = table.query(**kwargs)
             items.extend(res.get("Items", []))
             if "LastEvaluatedKey" in res and len(items) < limit:
-                scan_kwargs["ExclusiveStartKey"] = res["LastEvaluatedKey"]
+                kwargs["ExclusiveStartKey"] = res["LastEvaluatedKey"]
             else:
                 break
             if len(items) >= limit:
                 items = items[:limit]
                 break
+                
         kb = []
         for it in items:
             q = it.get("question")
@@ -104,5 +119,3 @@ def load_faq_kb_from_dynamo(table_name: str, limit: int = 200) -> Optional[str]:
     except (BotoCoreError, ClientError, Exception) as _e:
         print("load_faq_kb_from_dynamo failed:", _e)
         return None
-
-

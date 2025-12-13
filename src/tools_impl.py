@@ -1,6 +1,8 @@
 import os
 from typing import Any, Dict, List, Optional
 from datetime import datetime, timezone
+from boto3.dynamodb.conditions import Key
+from . import config
 
 try:
     import boto3
@@ -8,7 +10,7 @@ try:
 except Exception:
     boto3 = None
 
-TASKS_TABLE_NAME = os.getenv("TASKS_TABLE_NAME", "ueki-tasks")
+TASKS_TABLE_NAME = os.getenv("TASKS_TABLE_NAME", "app-tasks")
 TOOLS_DEBUG = os.getenv("TOOLS_DEBUG", "1") not in ("0", "false", "False", "")
 
 def _now_iso() -> str:
@@ -21,7 +23,7 @@ def _log(*args, **kwargs):
 def _ddb_table():
     if boto3 is None:
         raise RuntimeError("boto3 not available")
-    region = os.getenv("AWS_REGION") or os.getenv("AWS_DEFAULT_REGION") or "ap-northeast-1"
+    region = config.AWS_REGION
     _log("ddb.init", {"region": region, "table": TASKS_TABLE_NAME})
     ddb = boto3.resource("dynamodb", region_name=region)
     return ddb.Table(TASKS_TABLE_NAME)
@@ -30,7 +32,11 @@ def list_tasks(args: Dict[str, Any]) -> Dict[str, Any]:
     _log("list_tasks.args", args)
     try:
         table = _ddb_table()
-        r = table.scan(Limit=int(args.get("limit") or 200))
+        # Use Query instead of Scan for tenant isolation
+        r = table.query(
+            KeyConditionExpression=Key("client_id").eq(config.CLIENT_ID),
+            Limit=int(args.get("limit") or 200)
+        )
         out = {"items": r.get("Items", [])}
         _log("list_tasks.count", len(out.get("items", [])))
         return out
@@ -49,6 +55,7 @@ def create_task(args: Dict[str, Any]) -> Dict[str, Any]:
     if not name:
         return {"error": "name is required"}
     item = {
+        "client_id": config.CLIENT_ID,
         "name": str(name),
         "request": str(request),
         "start_datetime": str(start_datetime),
@@ -72,7 +79,7 @@ def get_task(args: Dict[str, Any]) -> Dict[str, Any]:
     if not name:
         return {"error": "name is required"}
     try:
-        r = table.get_item(Key={"name": str(name)})
+        r = table.get_item(Key={"client_id": config.CLIENT_ID, "name": str(name)})
         it = r.get("Item")
         if not it:
             _log("get_task.not_found", name)
@@ -108,7 +115,7 @@ def update_task(args: Dict[str, Any]) -> Dict[str, Any]:
         return {"error": "nothing to update"}
     try:
         r = table.update_item(
-            Key={"name": str(name)},
+            Key={"client_id": config.CLIENT_ID, "name": str(name)},
             UpdateExpression="SET " + ", ".join(expr) + ", #updated_at = :u",
             ExpressionAttributeValues=values,
             ExpressionAttributeNames=names,
@@ -128,7 +135,7 @@ def delete_task(args: Dict[str, Any]) -> Dict[str, Any]:
     if not name:
         return {"error": "name is required"}
     try:
-        table.delete_item(Key={"name": str(name)})
+        table.delete_item(Key={"client_id": config.CLIENT_ID, "name": str(name)})
         _log("delete_task.ok", {"name": name})
         return {"ok": True}
     except Exception as e:
@@ -214,6 +221,7 @@ TOOLS_IMPL = {
 }
 
 if __name__ == "__main__":
+    # Simplified CLI for testing (Requires CLIENT_ID in env or config)
     import argparse
     import json as _json
     import sys as _sys
@@ -303,5 +311,3 @@ if __name__ == "__main__":
     else:
         parser.print_help()
         _sys.exit(1)
-
-
